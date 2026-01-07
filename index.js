@@ -1,47 +1,76 @@
 const express = require('express');
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 const cors = require('cors');
+const { MongoClient } = require('mongodb');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Koneksi Database
-const connectDB = async () => {
-    if (mongoose.connections[0].readyState) return;
-    await mongoose.connect(process.env.MONGODB_URI);
-};
+// Koneksi ke Database
+const client = new MongoClient(process.env.MONGODB_URI);
+let db;
 
-// Model User
-const UserSchema = new mongoose.Schema({
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-});
-const User = mongoose.models.User || mongoose.model('User', UserSchema);
+async function connectDB() {
+    try {
+        await client.connect();
+        db = client.db("microservice_db"); // Pastikan nama DB sama
+        console.log("Database Connected!");
+    } catch (error) {
+        console.error("Database Error:", error);
+    }
+}
+connectDB();
 
-// Endpoint REGISTER
+app.get('/', (req, res) => res.send('Microservice Register KTP Ready!'));
+
+// ENDPOINT REGISTER (SEKARANG MENERIMA DATA KTP)
 app.post('/api/register', async (req, res) => {
     try {
-        await connectDB();
-        const { email, password } = req.body;
-        if (!email || !password) return res.status(400).json({ error: "Data tidak lengkap" });
+        // Menerima data lengkap dari Frontend
+        const { email, password, nik, nama, tempatLahir, tanggalLahir, jenisKelamin, alamat, agama, status, pekerjaan } = req.body;
 
-        const existingUser = await User.findOne({ email });
-        if (existingUser) return res.status(400).json({ error: "Email sudah ada" });
+        if (!email || !password || !nik || !nama) {
+            return res.status(400).json({ error: "Data tidak lengkap! Email, Password, NIK, dan Nama wajib diisi." });
+        }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ email, password: hashedPassword });
-        await newUser.save();
+        const usersCollection = db.collection('users');
 
-        res.status(201).json({ message: "Register Berhasil!" });
-    } catch (err) {
-        res.status(500).json({ error: "Server Error" });
+        // Cek apakah Email atau NIK sudah terdaftar
+        const existingUser = await usersCollection.findOne({ $or: [{ email }, { nik }] });
+        if (existingUser) {
+            return res.status(400).json({ error: "Email atau NIK sudah terdaftar!" });
+        }
+
+        // Simpan Data KTP Lengkap
+        const newUser = {
+            email,
+            password, // Di dunia nyata password harus di-hash (dienkripsi), tapi untuk belajar ini oke.
+            ktp: {
+                nik,
+                nama,
+                tempatLahir,
+                tanggalLahir,
+                jenisKelamin,
+                alamat,
+                agama,
+                status,
+                pekerjaan
+            },
+            createdAt: new Date()
+        };
+
+        await usersCollection.insertOne(newUser);
+
+        res.status(201).json({ message: "Data Penduduk Berhasil Didaftarkan!" });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Terjadi kesalahan server" });
     }
 });
 
-app.get('/', (req, res) => res.send('Service Register Ready'));
-module.exports = app;
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`Register Service running on port ${PORT}`));
 
-if (require.main === module) app.listen(3000, () => console.log('Register running on 3000'));
+module.exports = app;
